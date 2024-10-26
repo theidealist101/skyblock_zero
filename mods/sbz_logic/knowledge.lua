@@ -17,7 +17,9 @@ sbz_api.help_pages_by_index = {
     [12] = "Signs",
     [13] = "Note Blocks",
     [14] = "Buttons",
-    [15] = "Nic"
+    [15] = "Nic",
+    [16] = "NodeDB",
+    [17] = "Autocrafter"
 }
 
 local function edit_text(t)
