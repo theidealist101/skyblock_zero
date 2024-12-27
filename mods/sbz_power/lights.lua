@@ -1,4 +1,4 @@
-local cost = 10
+local cost = 4
 sbz_api.register_stateful_machine("sbz_power:powered_lamp", {
     description = "Powered Lamp",
     tiles = { "power_lamp_off.png^[colorize:black:50" },
@@ -29,7 +29,7 @@ minetest.register_node("sbz_power:funny_air", {
     -- drops = "" -- nope, intentionally commented out hehehehe, technic did the same thing, i mean this isnt a mod soup so you probably wont be able to obtain it but like yea, heheheheehe
     light_source = 14,
     diggable = false,
-    groups = { not_in_creative_inventory = 1 },
+    groups = { not_in_creative_inventory = 1, habitat_conducts = 1, explody = 10000 },
     sunlight_propagates = true,
     walkable = false,
     buildable_to = true,
@@ -83,6 +83,7 @@ sbz_api.register_stateful_machine("sbz_power:super_powered_lamp", {
     info_extra = "Lights up a 12x12x12 square around itself!",
     autostate = true,
     action = function(pos, _, meta, supply, demand)
+        meta:set_string("infotext", "")
         if sbz_api.is_on(pos) then
             illuminate(pos)
         else

@@ -84,7 +84,7 @@ unified_inventory.register_craft {
 
 unified_inventory.register_craft {
     type = "ele_fab",
-    output = "sbz_resources:ram_stick_1kb",
+    output = "sbz_resources:ram_stick_1mb",
     items = {
         "sbz_chem:gold_ingot 2",
         "sbz_chem:silicon_ingot 2"
@@ -149,6 +149,8 @@ listring[current_player;main]listring[context;input]listring[current_player;main
 
         return power_needed
     end,
+    input_inv = "input",
+    output_inv = "output",
     groups = {
         matter = 1,
     }

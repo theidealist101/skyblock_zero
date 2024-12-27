@@ -5,9 +5,8 @@
 
 local MP = minetest.get_modpath("sbz_logic_devices")
 
----@type function, function, function, function, function, function, function, function
-local explodebits, implodebits, packpixel, unpackpixel, rgbtohsv, hsvtorgb, bitwiseblend, blend
-= loadfile(MP .. "/gpu_utils.lua")()
+---@type function
+local blend = loadfile(MP .. "/gpu_utils.lua")()
 
 ---@type function, function, function
 local bresenham, xiaolin_wu, midpoint_circle = loadfile(core.get_modpath("sbz_logic_devices") .. "/gpu_line_algos.lua")()
@@ -17,6 +16,9 @@ local fonts = loadfile(MP .. "/gpu_font.lua")()
 
 ---@type function, function
 local transform_buffer, convolution_matrix = loadfile(MP .. "/gpu_matrix_operations.lua")()
+
+---@type function
+local apply_shaders = loadfile(MP .. "/gpu_shader.lua")()
 
 local pos_buffers = setmetatable({}, {
     __index = function(t, k)
@@ -28,9 +30,36 @@ local pos_buffers = setmetatable({}, {
 })
 local h = minetest.hash_node_position
 
+
+local a = 30
+minetest.register_privilege("place_gpus_unlimited", {
+    description = string.format("Place gpus closer than %s blocks from one another", a),
+    give_to_admin = false,
+    give_to_singleplayer = false,
+})
+
+local area_vec = vector.new(a, a, a)
+
+local function after_place_node(pos, placer)
+    if not placer then return end
+    if minetest.check_player_privs(placer, "place_gpus_unlimited") then return end
+
+    local nodes = minetest.find_nodes_in_area(vector.subtract(pos, area_vec), vector.add(pos, area_vec),
+        "sbz_logic_devices:gpu")
+
+    if #(nodes) > 1 then
+        core.chat_send_player(placer:get_player_name(),
+            ("2 Gpus can't be near eachother, they need to be %s blocks apart, or you have to have the place_gpus_unlimited privledge")
+            :format(a))
+        core.remove_node(pos)
+        return true
+    end
+end
+
 local max_buffers = 8
 local max_buffer_size = 128
 local max_commands_in_one_message = 32
+local max_ms_use = 100
 
 local min, abs = math.min, math.abs
 
@@ -94,6 +123,79 @@ local function type_int(x)
     return true
 end
 
+local function flood_fill(buffers, command)
+    local b = buffers[command.index]
+    if b == nil then return end
+
+    local tolerance = command.tolerance or 0
+    if type(tolerance) ~= "number" then return end
+
+    local real_buffer = b.buffer
+
+    local function idx(x, y)
+        return (y - 1) * b.xsize + x
+    end
+    local function color2table(c)
+        return { r = c:byte(1), g = c:byte(2), b = c:byte(3) }
+    end
+
+    local function similar(target_color, compare_color, tolerance)
+        return
+            (math.abs(target_color.r - compare_color.r) <= tolerance) and
+            (math.abs(target_color.g - compare_color.g) <= tolerance) and
+            (math.abs(target_color.b - compare_color.b) <= tolerance)
+    end
+
+    local color = transform_color(command.color)
+
+
+    local x, y = validate_area(b, command.x, command.y, command.x, command.y)
+    if x == nil then return end
+
+    local checking_color = real_buffer[idx(x, y)]
+    if checking_color == nil then return end
+    checking_color = color2table(checking_color)
+
+    local stack = {}
+    local seen = {}
+    stack[#stack + 1] = { x = x, y = y }
+
+    local ruleset_4dir = {
+        { x = 1,  y = 0 },
+        { x = -1, y = 0 },
+        { x = 0,  y = 1 },
+        { x = 0,  y = -1 }
+    }
+
+    local hash = function(x1, y1)
+        return y1 * max_buffer_size + x1
+    end
+
+    while #stack ~= 0 do
+        local pos = table.remove(stack) -- dont worry this is an O(1)
+
+        if not real_buffer[idx(pos.x, pos.y)] then
+            return
+        end
+
+        local col = color2table(real_buffer[idx(pos.x, pos.y)])
+
+        if similar(col, checking_color, tolerance) then
+            real_buffer[idx(pos.x, pos.y)] = color
+            for k, v in ipairs(ruleset_4dir) do
+                local nx, ny = pos.x + v.x, pos.y + v.y
+                if
+                    (nx <= b.xsize) and (ny <= b.ysize) and (ny > 0) and (nx > 0)
+                    and not seen[hash(nx, ny)]
+                then
+                    stack[#stack + 1] = { x = nx, y = ny }
+                    seen[hash(nx, ny)] = true
+                end
+            end
+        end
+    end
+end
+
 local commands = {
     ["create_buffer"] = {
         type_checks = {
@@ -123,7 +225,7 @@ local commands = {
     ["send"] = {
         type_checks = {
             index = type_index,
-            to_pos = libox.type("table"),
+            to_pos = type_any, --libox.type("table"),
         },
         f = function(buffers, command, pos, from_pos)
             if not libox.type_vector(command.to_pos) then
@@ -136,7 +238,6 @@ local commands = {
             end
         end
     },
-
     ["send_region"] = {
         type_checks = {
             index = type_index,
@@ -343,26 +444,34 @@ local commands = {
             end
         end,
     },
-    ["sendpacked"] = {
+    ["send_packed"] = {
+        -- this packing works a little differently, and should be like a lot faster
         type_checks = {
             index = type_index,
-            to_pos = libox.type("table"),
+            to_pos = type_any,
+            base64 = libox.type("boolean")
         },
         f = function(buffers, command, pos, from_pos)
             if not libox.type_vector(command.to_pos) then
                 command.to_pos = from_pos
             end
             local b = buffers[command.index]
-            if b ~= nil then
-                local result = export(b, 1, 1, b.xsize, b.ysize)
-                local packed_data = {}
-                for y = 1, #result[1] do
-                    for x = 1, #result do
-                        packed_data[#packed_data + 1] = packpixel(string.sub(result[y][x], 2)) -- dont do the for i=1,1000 do x = x .. y end
-                    end
+            if b == nil then return end
+
+            local buf = b.buffer
+            local packed_data = {}
+            for y = 1, b.ysize do
+                for x = 1, b.xsize do
+                    local px = buf[(y - 1) * b.xsize + x]
+                    packed_data[#packed_data + 1] = px
+                    -- 3 bytes, in the form of rgb, such that px:byte(1) == r, px:byte(2) == g, px:byte(3) == b
                 end
-                sbz_logic.send_l(command.to_pos, table.concat(packed_data), from_pos) -- send as if logic sent it
             end
+            local result = table.concat(packed_data)
+            if command.base64 then
+                result = minetest.encode_base64(result)
+            end
+            sbz_logic.send_l(command.to_pos, result, from_pos) -- send as if logic sent it
         end
     },
     ["send_png"] = { -- i guess this would be "send extra packed but yea good luck unpacking it"
@@ -387,27 +496,38 @@ local commands = {
             end
         end
     },
-    ["loadpacked"] = {
+    ["load_packed"] = {
         type_checks = {
             index = type_index,
-            packed = libox.type("string"),
+            data = libox.type("string"),
             x1 = type_int,
             y1 = type_int,
             x2 = type_int,
             y2 = type_int,
+            base64 = libox.type("boolean"),
         },
         f = function(buffers, command)
             local b = buffers[command.index]
             if b == nil then return end
+
             local x1, y1, x2, y2 = validate_area(b, command.x1, command.y1, command.x2, command.y2)
             if not x1 then return end
 
+            local data = command.data
+            if command.base64 then
+                data = minetest.decode_base64(command.data)
+            end
+            if data == nil then return end -- can happen with base64
+
             local real_buf = b.buffer
+            local idx = 1
             for y = y1, y2 do
                 for x = x1, x2 do
-                    local packed_idx = (y * command.xsize + x) * 4 + 1
-                    local packed_data = string.sub(command.data, packed_idx, packed_idx + 3)
-                    real_buf[((y * real_buf.xsize) - 1) + x] = transform_color(unpackpixel(packed_data))
+                    local packed_data = string.sub(data, idx, idx + 2)
+                    if packed_data and #packed_data == 3 then
+                        real_buf[(y - 1) * b.xsize + x] = packed_data
+                    end
+                    idx = idx + 3
                 end
             end
         end
@@ -454,75 +574,7 @@ local commands = {
             y = type_int,
             color = type_any,
         },
-        f = function(buffers, command)
-            local b = buffers[command.index]
-            if b == nil then return end
-
-            local tolerance = command.tolerance or 0
-            if type(tolerance) ~= "number" then return end
-
-            local real_buffer = b.buffer
-
-            local function idx(x, y)
-                return (y - 1) * b.xsize + x
-            end
-            local function color2table(c)
-                return { r = c:byte(1), g = c:byte(2), b = c:byte(3) }
-            end
-
-            local function similar(target_color, compare_color, tolerance)
-                return
-                    (math.abs(target_color.r - compare_color.r) <= tolerance) and
-                    (math.abs(target_color.g - compare_color.g) <= tolerance) and
-                    (math.abs(target_color.b - compare_color.b) <= tolerance)
-            end
-
-            local color = transform_color(command.color)
-
-            local queue = Queue.new()
-            local seen = {}
-
-            local x, y = validate_area(b, command.x, command.y, command.x, command.y)
-            if x == nil then return end
-            queue:enqueue({ x = x, y = y })
-            local checking_color = real_buffer[idx(x, y)]
-            if checking_color == nil then return end
-            checking_color = color2table(checking_color)
-
-            local ruleset_4dir = {
-                { x = 1,  y = 0 },
-                { x = -1, y = 0 },
-                { x = 0,  y = 1 },
-                { x = 0,  y = -1 }
-            }
-
-            local hash = function(x1, y1)
-                return y1 * max_buffer_size + x1
-            end
-
-            while not queue:is_empty() do
-                local pos = queue:dequeue()
-                if not real_buffer[idx(pos.x, pos.y)] then
-                    return
-                end
-
-                local col = color2table(real_buffer[idx(pos.x, pos.y)])
-
-                if similar(col, checking_color, tolerance) then
-                    real_buffer[idx(pos.x, pos.y)] = color
-
-                    for k, v in pairs(ruleset_4dir) do
-                        local nx, ny = math.max(0, pos.x + v.x), math.max(0, pos.y + v.y)
-                        if not seen[hash(nx, ny)] then
-                            if (nx <= b.xsize) and (ny <= b.ysize) and (ny > 0) and (nx > 0) then
-                                queue:enqueue({ x = nx, y = ny })
-                            end
-                            seen[hash(nx, ny)] = true
-                        end
-                    end
-                end
-            end
-        end
+        f = flood_fill,
     },
     ["text"] = {
         type_checks = {
@@ -648,11 +700,12 @@ local commands = {
             local matrix_ysize = #command.matrix
             if type(command.matrix[1]) ~= "table" then return end
             local matrix_xsize = #command.matrix[1]
-
             if matrix_ysize > 5 then return end
             if matrix_xsize > 5 then return end
             if matrix_xsize < 2 then return end
             if matrix_ysize < 2 then return end
+            if matrix_xsize % 2 == 0 then return end -- cannot have even matrices
+            if matrix_ysize % 2 == 0 then return end -- cannot have even matrices
 
             for y = 1, matrix_ysize do
                 if type(command.matrix[y]) ~= "table" then return end
@@ -667,7 +720,17 @@ local commands = {
             convolution_matrix(b, matrix_copy, x1, y1, x2, y2)
         end
     },
-
+    ["shader"] = {
+        type_checks = {
+            index = type_index,
+            shader = libox.type("string"),
+        },
+        f = function(buffers, command, pos, from_pos)
+            local b = buffers[command.index]
+            if b == nil then return end
+            apply_shaders(b, command.shader, pos, from_pos)
+        end
+    }
 }
 
 local function exec_command(buffers, command, pos, from_pos)
@@ -698,33 +761,60 @@ core.register_node("sbz_logic_devices:gpu", {
         "gpu_side.png",
         "gpu_side.png"
     },
-
+    sounds = sbz_api.sounds.machine(),
 
     on_logic_send = function(pos, msg, from_pos)
         if type(msg) ~= "table" then return end
         if type(msg[1]) ~= "table" then msg = { msg } end
 
-        local t0 = minetest.get_us_time()
+        local meta = minetest.get_meta(pos)
+        local lag = meta:get_int("lag") or 0
+
+        local last_measured = meta:get_int("last_measured")
+        if last_measured ~= os.time() then
+            lag = 0
+        end
+
         local buffers = pos_buffers[h(pos)]
 
         for i = 1, math.min(#msg, max_commands_in_one_message) do
+            if lag > max_ms_use then -- sorry :/
+                break
+            end
             local t0 = minetest.get_us_time()
             exec_command(buffers, msg[i], pos, from_pos)
-            minetest.log(msg[i].type .. " : " .. minetest.get_us_time() - t0)
+            lag = math.floor(lag + (minetest.get_us_time() - t0) / 1000)
         end
 
-        local lag = (minetest.get_us_time() - t0) / 1000
-        local meta = minetest.get_meta(pos)
-
-        local old_lag = meta:get_int("lag")
-        local last_measured = meta:get_int("last_measured")
         if last_measured ~= os.time() then
-            meta:set_string("infotext", "Lag: " .. old_lag .. "ms")
-            meta:set_int("lag", 0)
-            old_lag = 0
+            meta:set_string("infotext", ("Lag: %s/%sms"):format(lag, max_ms_use))
             meta:set_int("last_measured", os.time())
         end
-        local lag = old_lag + lag
         meta:set_int("lag", lag)
-    end
+    end,
+    after_place_node = after_place_node
 })
+
+mesecon.register_on_mvps_move(function(moved_nodes)
+    for i = 1, #moved_nodes do
+        local moved_node = moved_nodes[i]
+        if rawget(pos_buffers, h(moved_node.oldpos)) then
+            pos_buffers[h(moved_node.pos)] = pos_buffers[h(moved_node.oldpos)]
+            pos_buffers[h(moved_node.oldpos)] = nil
+        end
+    end
+end)
+
+
+unified_inventory.register_craft {
+    type = "ele_fab",
+    items = {
+        "sbz_resources:lua_chip 8",
+        "unifieddyes:colorium 64",
+        "sbz_resources:ram_stick_1mb 16",
+        "sbz_resources:emittrium_circuit 3"
+    },
+    output = "sbz_logic_devices:gpu",
+    width = 2,
+    height = 2,
+}

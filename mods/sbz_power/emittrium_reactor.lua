@@ -136,7 +136,7 @@ minetest.register_node("sbz_power:reactor_glass", {
     },
     drawtype = "glasslike_framed",
     paramtype = "light",
-    groups = { matter = 1, reactor_shell = 1, explody = 3 },
+    groups = { matter = 1, reactor_shell = 1, explody = 1 },
 })
 
 minetest.register_craft {
@@ -153,7 +153,7 @@ local reactor_shell = "blank.png^[invert:rgba^[multiply:#639bFF^reactor_shell.pn
 minetest.register_node("sbz_power:reactor_item_input", {
     description = "Reactor Emittrium Input",
     info_extra = "ONLY ONE can be used in an emittrium reactor, supplies emittrium to the reactor core",
-    groups = { matter = 1, reactor_shell = 1, tubedevice = 1, tubedevice_receiver = 1, explody = 2 },
+    groups = { matter = 1, reactor_shell = 1, tubedevice = 1, tubedevice_receiver = 1, explody = 1 },
 
     tiles = {
         reactor_shell,
@@ -280,7 +280,7 @@ minetest.register_node("sbz_power:reactor_infoscreen", {
         reactor_shell,
         "reactor_infoscreen.png",
     },
-    groups = { matter = 1, reactor_shell = 1, explody = 2 },
+    groups = { matter = 1, reactor_shell = 1, explody = 1 },
     on_rightclick = function(pos)
         local meta = minetest.get_meta(pos)
         if meta:get_int("linked") == 0 then
@@ -379,7 +379,7 @@ sbz_api.register_generator("sbz_power:reactor_power_port", {
         reactor_shell,
         "reactor_powerport.png",
     },
-    groups = { matter = 1, reactor_shell = 1, pipe_connects = 1, explody = 2 },
+    groups = { matter = 1, reactor_shell = 1, pipe_connects = 1, explody = 1 },
     connect_sides = { "front" },
     action = function(pos, node, meta, supply, demand)
         meta:set_string("infotext", "")
@@ -418,7 +418,7 @@ minetest.register_node("sbz_power:reactor_coolant_port", {
         reactor_shell,
         "reactor_coolantport.png",
     },
-    groups = { matter = 1, reactor_shell = 1, fluid_pipe_connects = 1, fluid_pipe_stores = 1, explody = 2 },
+    groups = { matter = 1, reactor_shell = 1, fluid_pipe_connects = 1, fluid_pipe_stores = 1, explody = 1 },
     connect_sides = { "front" },
     on_construct = function(pos)
         minetest.get_meta(pos):set_string("liquid_inv", minetest.serialize({
@@ -443,31 +443,7 @@ local function explode(pos)
     local owner = minetest.get_meta(pos):get_string("owner")
     --breaking nodes
     minetest.sound_play({ name = "distant-explosion-47562", gain = 0.4 })
-    local wear_max = 1.5
-    for _ = 1, 360 do
-        local raycast = minetest.raycast(pos, pos + vector.random_direction() * 32, false)
-        local wear = 0
-        for pointed in raycast do
-            if pointed.type == "node" then
-                local nodename = minetest.get_node(pointed.under).name
-                wear = wear + (1 / minetest.get_item_group(nodename, "explody"))
-                --the explody group hence signifies roughly how many such nodes in a straight line it can break before stopping
-                --although this is very random
-                if wear > wear_max then break end
-                if not minetest.is_protected(pointed.under, owner) then
-                    minetest.set_node(pointed.under,
-                        { name = (minetest.registered_nodes[nodename] or {})._exploded or "air" })
-                end
-            end
-        end
-    end
-    --knockback
-    for _, obj in ipairs(minetest.get_objects_inside_radius(pos, 16)) do
-        if obj:is_player() then
-            local dir = obj:get_pos() - pos
-            obj:add_velocity((vector.normalize(dir) + vector.new(0, 0.5, 0)) * 0.5 * (16 - vector.length(dir)))
-        end
-    end
+    sbz_api.explode(pos, 32, 1.5, false, owner)
     --particle effects
     minetest.add_particlespawner({
         time = 1,
@@ -492,6 +468,7 @@ end
 sbz_api.reactor_explode = explode
 
 local CONSUME_EMITTRIUM_EVERY_X_SEC = 30
+
 local function core_tick(pos)
     local meta = minetest.get_meta(pos)
     local tickcount = meta:get_int("tickcount") or 0
@@ -569,18 +546,20 @@ local function core_tick(pos)
         sbz_api.turn_off(pos)
         return
     end
+    local emittrium_stack, emittriummeta
+    if nodes.emittrium then
+        emittriummeta = minetest.get_meta(nodes.emittrium)
+        emittrium_stack = emittriummeta:get_inventory():get_stack("main", 1)
 
-    local emittriummeta = minetest.get_meta(nodes.emittrium)
-    local emittrium_stack = emittriummeta:get_inventory():get_stack("main", 1)
-
-    if tickcount == 0 then
-        local newcount = emittrium_stack:get_count() - 16
-        if newcount < 0 then
-            err = "Not enough emittrium"
-            meta:set_int("tickcount", CONSUME_EMITTRIUM_EVERY_X_SEC) -- resets
-        else
-            emittrium_stack:set_count(emittrium_stack:get_count() - 16)
-            emittriummeta:get_inventory():set_stack("main", 1, emittrium_stack)
+        if tickcount == 0 then
+            local newcount = emittrium_stack:get_count() - 16
+            if newcount < 0 then
+                err = "Not enough emittrium"
+                meta:set_int("tickcount", CONSUME_EMITTRIUM_EVERY_X_SEC) -- resets
+            else
+                emittrium_stack:set_count(emittrium_stack:get_count() - 16)
+                emittriummeta:get_inventory():set_stack("main", 1, emittrium_stack)
+            end
         end
     end
     local infometa = minetest.get_meta(nodes.info)
@@ -624,5 +603,22 @@ minetest.register_abm({
     action = core_tick,
     interval = 1,
     chance = 1,
-
 })
+
+
+mesecon.register_on_mvps_move(function(moved_nodes)
+    for i = 1, #moved_nodes do
+        local moved_node = moved_nodes[i]
+        if moved_node.node.name == "sbz_power:reactor_power_port" then
+            local meta = minetest.get_meta(moved_node.pos)
+            local linked_coords = vector.from_string(meta:get_string("linked_coords"))
+            linked_coords = (linked_coords - vector.copy(moved_node.oldpos)) + vector.copy(moved_node.pos)
+            meta:set_string("linked_coords", vecotr.to_string(linked_coords))
+        elseif moved_node.node.name == "sbz_power:reactor_infoscreen" then
+            local meta = minetest.get_meta(moved_node.pos)
+            local linked_coords = vector.from_string(meta:get_string("linked_pos"))
+            linked_coords = (linked_coords - vector.copy(moved_node.oldpos)) + vector.copy(moved_node.pos)
+            meta:set_string("linked_pos", vecotr.to_string(linked_coords))
+        end
+    end
+end)

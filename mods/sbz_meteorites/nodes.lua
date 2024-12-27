@@ -17,7 +17,8 @@ minetest.register_node("sbz_meteorites:meteoric_matter", {
             { rarity = 2, items = { "sbz_resources:matter_dust" } },
             { rarity = 2, items = { "sbz_resources:matter_dust" } }
         }
-    }
+    },
+    sounds = sbz_api.sounds.matter(),
 })
 
 minetest.register_node("sbz_meteorites:meteoric_antimatter", {
@@ -39,7 +40,8 @@ minetest.register_node("sbz_meteorites:meteoric_antimatter", {
             { rarity = 2, items = { "sbz_resources:antimatter_dust" } },
             { rarity = 2, items = { "sbz_resources:antimatter_dust" } }
         }
-    }
+    },
+    sounds = sbz_api.sounds.antimatter(),
 })
 
 minetest.register_node("sbz_meteorites:meteoric_emittrium", {
@@ -61,7 +63,8 @@ minetest.register_node("sbz_meteorites:meteoric_emittrium", {
             { rarity = 2, items = { "sbz_resources:raw_emittrium" } },
             { rarity = 2, items = { "sbz_resources:raw_emittrium" } }
         }
-    }
+    },
+    sounds = sbz_api.sounds.matter(),
 })
 
 local drops = sbz_api.crusher_drops
@@ -82,20 +85,43 @@ minetest.register_node("sbz_meteorites:meteoric_metal", {
     drop = {
         max_items = 9,
         items = processed_drops
-    }
+    },
+    sounds = sbz_api.sounds.matter(),
 })
 
 minetest.register_node("sbz_meteorites:neutronium", {
     description = "Neutronium",
     tiles = { "neutronium.png" },
     paramtype = "light",
-    light_source = 14,
-    groups = { gravity = 300, matter = 1 }
+    light_source = 4,
+    groups = { gravity = 300, matter = 1, charged = 1, attraction = 256 },
+    sounds = sbz_api.sounds.matter(),
 })
 minetest.register_node("sbz_meteorites:antineutronium", {
     description = "Antineutronium",
-    tiles = { "antineutronium.png" },
+    tiles = { "neutronium.png^[invert:rgb" },
     paramtype = "light",
-    light_source = 10,
-    groups = { antigravity = 300, antimatter = 1 }
+    light_source = 8,
+    groups = { antigravity = 300, antimatter = 1, charged = 1, attraction = -256 },
+    sounds = sbz_api.sounds.antimatter(),
 })
+
+
+local core_blob = "sbz_resources:compressed_core_dust"
+minetest.register_craft {
+    output = "sbz_meteorites:neutronium",
+    recipe = {
+        { core_blob, core_blob,                       core_blob },
+        { core_blob, "sbz_meteorites:antineutronium", core_blob },
+        { core_blob, core_blob,                       core_blob },
+    }
+}
+
+minetest.register_craft {
+    output = "sbz_meteorites:antineutronium",
+    recipe = {
+        { core_blob, core_blob,                   core_blob },
+        { core_blob, "sbz_meteorites:neutronium", core_blob },
+        { core_blob, core_blob,                   core_blob },
+    }
+}

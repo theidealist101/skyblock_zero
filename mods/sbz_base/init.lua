@@ -1,12 +1,17 @@
-minetest.log("action", "sbz base: init")
-
 local modname = minetest.get_current_modname()
 sbz_api = {
     debug = minetest.settings:get_bool("debug", false)
 }
 
+sbz_api.deg2rad = math.pi / 180
+sbz_api.rad2deg = 180 / math.pi
+
 local modpath = minetest.get_modpath("sbz_base")
 local storage = minetest.get_mod_storage()
+
+-- apply forced game settings
+core.settings:set("enable_damage", "false")
+core.settings:set("enable_pvp", "false")
 
 --vector.random_direction was added in 5.10-dev, but this is defined here for support
 --code borrowed from builtin/vector.lua in 5.10-dev
@@ -60,8 +65,20 @@ function iterate_around_pos(pos, func)
     end
 end
 
+function iterate_around_radius(pos, func, rad)
+    rad = rad or 1
+    for x = -rad, rad do
+        for y = -rad, rad do
+            for z = -rad, rad do
+                local vec = vector.new(x, y, z)
+                vec = vec + pos
+                func(vec)
+            end
+        end
+    end
+end
+
 -- generate an empty world with only the core block
-minetest.log("action", "sbz base: register mapgen")
 minetest.register_on_generated(function(minp, maxp, seed)
     if minp.x <= 0 and maxp.x >= 0 and minp.y <= 0 and maxp.y >= 0 and minp.z <= 0 and maxp.z >= 0 then
         local vm, emin, emax = minetest.get_mapgen_object("voxelmanip")
@@ -93,7 +110,6 @@ minetest.register_on_generated(function(minp, maxp, seed)
 end)
 
 -- new players always spawn on the core
-minetest.log("action", "sbz base: register new player")
 minetest.register_on_newplayer(function(player)
     player:set_pos({ x = 0, y = 1, z = 0 })
 
@@ -101,25 +117,26 @@ minetest.register_on_newplayer(function(player)
     local name = player:get_player_name()
     if inv then
         if inv:contains_item("main", "sbz_progression:questbook") then
-            displayDialougeLine(name, "How tf did you manage to get a questbook before spawning as a new player??")
+            displayDialougeLine(name, "You already had a questbook before joining.")
         else
             if inv:room_for_item("main", "sbz_progression:questbook") then
                 inv:add_item("main", "sbz_progression:questbook")
                 -- displayDialougeLine(name, "You have been given a Quest Book.")
             else
                 displayDialougeLine(name,
-                    "How tf did you manage to fill your inventory before spawning as a new player??")
+                    "Your inventory is full. Can't give you a questbook. Use /qb")
             end
         end
     end
 end)
 
 minetest.register_on_joinplayer(function(ref, last_login)
-    assert(minetest.change_player_privs, "You have an outdated version of minetest, please update!")
-    minetest.change_player_privs(ref:get_player_name(), {
-        home = true,
-        tp = true
-    })
+    local privs = minetest.get_player_privs(ref:get_player_name())
+    privs.home = true
+    privs.tp = true
+    minetest.set_player_privs(ref:get_player_name(), privs)
+
+    ref:override_day_night_ratio(0)
 end)
 
 -- also allow /core
@@ -151,6 +168,10 @@ local bgm_lengths = {
 local handles = {}
 
 local function playRandomBGM(player)
+    if not player then return end
+    if player:is_valid() == false then return end
+    if player:get_meta() == nil then return end
+
     local player_name = player:get_player_name()
     if player:get_meta():get_int("hates_bgm") == 1 then return end
     local random_index = math.random(1, #bgm_sounds)
@@ -159,7 +180,7 @@ local function playRandomBGM(player)
     if handles[player_name] then minetest.sound_stop(handles[player_name]) end
     handles[player_name] = minetest.sound_play(sound_name, {
         to_player = player_name,
-        gain = 1.0,
+        gain = 1,
     })
     minetest.after(sound_length + math.random(10, 100),
         function() -- i introduce one second of complete silence here, just because -- yeah well I introduce three hundred -- yeah well guess what its random now
@@ -195,7 +216,6 @@ local function table_length(tbl)
     return count
 end
 
-minetest.log("action", "sbz base: register join player")
 minetest.register_on_joinplayer(function(player)
     -- send welcome messages
     minetest.chat_send_player(player:get_player_name(), "SkyBlock: Zero")
@@ -264,7 +284,6 @@ minetest.register_on_joinplayer(function(player)
 
     -- space gravity yeeeah
     player:set_physics_override({
-        gravity = 0.5,
         sneak_glitch = true, -- sneak glitch is super based
     })
 
@@ -287,12 +306,14 @@ end)
 
 -- everything pitch dark always
 
+sbz_api.players_with_temporarily_hidden_trails = {}
+
 minetest.register_globalstep(function(_)
     minetest.set_timeofday(0)
 
     for _, player in ipairs(minetest.get_connected_players()) do
         -- let the trail indicate that like yeah a globalstep happened
-        if player:get_meta():get_int("trailHidden") == 0 then
+        if player:get_meta():get_int("trailHidden") == 0 and not sbz_api.players_with_temporarily_hidden_trails[player:get_player_name()] then
             local pos = player:get_pos()
             minetest.add_particlespawner({
                 amount = 1,
@@ -317,43 +338,21 @@ minetest.register_globalstep(function(_)
 end)
 
 -- inter-mod utils
-function is_node_within_radius(pos, itemstring, radius)
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            for dz = -radius, radius do
-                local current_pos = {
-                    x = pos.x + dx,
-                    y = pos.y + dy,
-                    z = pos.z + dz
-                }
-                local node = minetest.get_node(current_pos)
-                if node.name == itemstring then
-                    return true
-                end
-            end
-        end
-    end
-    return false
+function count_nodes_within_radius(pos, nodenames, radius)
+    local radius_vector = vector.new(radius, radius, radius)
+    return #core.find_nodes_in_area(vector.subtract(pos, radius_vector), vector.add(pos, radius_vector), nodenames)
 end
 
-function count_nodes_within_radius(pos, itemstring, radius)
-    local count = 0
-    for dx = -radius, radius do
-        for dy = -radius, radius do
-            for dz = -radius, radius do
-                local current_pos = {
-                    x = pos.x + dx,
-                    y = pos.y + dy,
-                    z = pos.z + dz
-                }
-                local node = minetest.get_node(current_pos)
-                if node.name == itemstring then
-                    count = count + 1
-                end
-            end
-        end
-    end
-    return count
+-- returns the first node pos
+function is_node_within_radius(pos, nodenames, radius)
+    local radius_vector = vector.new(radius, radius, radius)
+    return core.find_nodes_in_area(vector.subtract(pos, radius_vector), vector.add(pos, radius_vector), nodenames)[1]
+end
+
+function is_air(pos)
+    local node = core.get_node(pos).name
+    local reg = minetest.registered_nodes[node]
+    return reg.air or reg.air_equivalent or node == "air"
 end
 
 -- mapgen aliases
@@ -365,10 +364,11 @@ minetest.register_alias("mapgen_river_water_source", "air")
 
 local MP = minetest.get_modpath("sbz_base")
 
-dofile(MP .. "/override_descriptions.lua")
 dofile(MP .. "/override_for_areas.lua")
+dofile(MP .. "/override_descriptions.lua")
 dofile(MP .. "/vm.lua")
 dofile(MP .. "/queue.lua")
+dofile(MP .. "/override_for_other.lua")
 
 --vector.random_direction was added in 5.10-dev, but I use 5.9, so make sure this exists
 --code borrowed from builtin/vector.lua in 5.10-dev
@@ -385,3 +385,82 @@ if not vector.random_direction then
         return vector.new(x / l, y / l, z / l)
     end
 end
+
+-- yeah you actually have to do this
+-- definition copied from mtg
+minetest.override_item("", {
+    --    wield_scale = { x = 1, y = 1, z = 2.5 },
+    tool_capabilities = {
+        full_punch_interval = 0.9,
+        max_drop_level = 0,
+        groupcaps = {
+            crumbly = { times = { [2] = 3.00, [3] = 0.70 }, uses = 0, maxlevel = 1 },
+            snappy = { times = { [3] = 0.40 }, uses = 0, maxlevel = 1 },
+            oddly_breakable_by_hand = { times = { [1] = 3.50, [2] = 2.00, [3] = 0.70 }, uses = 0 }
+        },
+        damage_groups = { fleshy = 1 },
+    }
+})
+
+
+function table.override(x, y)
+    if y == nil then return x end
+    x = table.copy(x)
+    for k, v in pairs(y) do
+        x[k] = v
+    end
+    return x
+end
+
+dofile(MP .. "/sound_api.lua")
+
+sbz_api.filter_node_neighbors = function(start_pos, radius, filtering_function, break_after_one_result)
+    local returning = {}
+    for x = -radius, radius do
+        for y = -radius, radius do
+            for z = -radius, radius do
+                local pos = vector.add(start_pos, vector.new(x, y, z))
+                local filter_results = { filtering_function(pos) }
+
+                if #filter_results == 1 then
+                    returning[#returning + 1] = filter_results[1]
+                elseif #filter_results ~= 0 then
+                    returning[#returning + 1] = filter_results
+                end
+                if break_after_one_result and #filter_results > 0 then return returning end
+            end
+        end
+    end
+    return returning
+end
+
+--- Async is todo, and it wont be true async, just the function would be delayed, useful for something like a detonator
+---@param pos vector
+---@param power number
+---@param r number
+---@param async boolean
+sbz_api.explode = function(pos, r, power, async, owner)
+    owner = owner or ""
+    for _ = 1, 500 do
+        local raycast = minetest.raycast(pos, pos + vector.random_direction() * r, false)
+        local wear = 0
+        for pointed in raycast do
+            if pointed.type == "node" then
+                local nodename = minetest.get_node(pointed.under).name
+                wear = wear + (1 / minetest.get_item_group(nodename, "explody"))
+                --the explody group hence signifies roughly how many such nodes in a straight line it can break before stopping
+                --although this is very random
+                if wear > power or minetest.is_protected(pointed.under, owner) then break end
+                minetest.set_node(pointed.under, { name = minetest.registered_nodes[nodename]._exploded or "air" })
+            end
+        end
+    end
+    for _, obj in ipairs(minetest.get_objects_inside_radius(pos, r)) do
+        if obj:is_player() then
+            local dir = obj:get_pos() - pos
+            obj:add_velocity((vector.normalize(dir) + vector.new(0, 0.5, 0)) * 0.5 * (r - vector.length(dir)))
+        end
+    end
+end
+
+minetest.log("action", "Skyblock: Zero's Base Mod has finished loading.")

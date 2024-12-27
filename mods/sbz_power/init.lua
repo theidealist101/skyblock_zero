@@ -12,7 +12,9 @@ function sbz_api.add_tube_support(def)
     if (def.input_inv or def.output_inv) and not def.disallow_pipeworks then
         def.groups.tubedevice = 1
         def.groups.tubedevice_receiver = 1
-        if def.input_inv and def.output_inv then
+        if def.input_inv or def.output_inv then
+            def.input_inv = def.input_inv or def.output_inv
+            def.output_inv = def.output_inv or def.input_inv
             def.tube = def.tube or {
                 insert_object = function(pos, node, stack, direction)
                     local meta = minetest.get_meta(pos)
@@ -26,7 +28,7 @@ function sbz_api.add_tube_support(def)
                     local meta = minetest.get_meta(pos)
                     local inv = meta:get_inventory()
 
-                    if inv:get_list(def.input_inv) then
+                    if inv:get_list(def.input_inv or "") then
                         stack:peek_item(1)
                         return inv:room_for_item(def.input_inv, stack)
                     end
@@ -79,6 +81,7 @@ function sbz_api.register_machine(name, def)
     def.groups.sbz_machine = 1
     def.groups.pipe_conducts = def.groups.pipe_conducts or 1
     def.groups.pipe_connects = 1
+    def.sounds = sbz_api.sounds.machine()
 
     sbz_api.add_tube_support(def)
     if not def.control_action_raw then
@@ -140,6 +143,7 @@ function sbz_api.register_generator(name, def)
     def.groups.sbz_generator = 1
     def.groups.pipe_conducts = def.groups.pipe_conducts or 1
     def.groups.pipe_connects = 1
+    def.sounds = sbz_api.sounds.machine()
 
     if def.power_generated then
         def.action = function(pos, node, meta, ...)

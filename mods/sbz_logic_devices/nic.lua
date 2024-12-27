@@ -16,6 +16,7 @@ minetest.register_node("sbz_logic_devices:nic", {
     info_extra = "<Server setting> Priv Locked: " .. (is_priv_locked and "yes" or "no"),
 
     groups = { cracky = 3, matter = 1, ui_logic = 1 },
+    sounds = sbz_api.sounds.machine(),
     is_ground_content = false,
     tiles = {
         "nic_top.png",
@@ -87,7 +88,7 @@ minetest.register_node("sbz_logic_devices:nic", {
 unified_inventory.register_craft {
     type = "ele_fab",
     items = {
-        "sbz_bio:warpshroom 12 ",
+        "sbz_resources:warp_crystal 4",
         "sbz_resources:lua_chip 5",
         "sbz_chem:silicon_ingot 3",
         "sbz_chem:invar_ingot 20"

@@ -12,7 +12,7 @@ minetest.register_on_mods_loaded(function()
         end
 
         if v.battery_max then
-            new_desc[#new_desc + 1] = "Stores " .. v.battery_max .. " power"
+            new_desc[#new_desc + 1] = "Stores " .. sbz_api.format_power(v.battery_max)
         end
 
         if v.tube then
@@ -33,12 +33,15 @@ minetest.register_on_mods_loaded(function()
                 new_desc[#new_desc + 1] =
                 "This chemical is disabled.\nThis means that you won't be able to obtain it anymore, but it may receive a use in the future."
             end
+            if v.groups.burn ~= nil then
+                new_desc[#new_desc + 1] = "Burn power: " .. v.groups.burn .. " co2"
+            end
             if v.groups.explody then explody = true end
         end
 
 
         if v.type == "node" and not explody then
-            new_desc[#new_desc + 1] = "Immune to explosions"
+            new_desc[#new_desc + 1] = "Immune to explosions."
         end
 
         if v.info_extra then
@@ -51,6 +54,14 @@ minetest.register_on_mods_loaded(function()
             end
         end
 
+
+        if not v.allow_metadata_inventory_put_was_nop and v.type == "node" then
+            new_desc[#new_desc + 1] = "Logic can't put items to this node."
+        end
+
+        if sbz_api.mvps_stoppers[k] == true then
+            new_desc[#new_desc + 1] = "Logic builders cannot move this node."
+        end
 
         if #new_desc > 1 then
             for i = 2, #new_desc do

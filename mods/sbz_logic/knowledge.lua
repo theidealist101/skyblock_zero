@@ -19,7 +19,12 @@ sbz_api.help_pages_by_index = {
     [14] = "Buttons",
     [15] = "Nic",
     [16] = "NodeDB",
-    [17] = "Autocrafter"
+    [17] = "Autocrafter",
+    [18] = "Gpu",
+    [19] = "Transferring Items with Logic",
+    [20] = "Hologram Projector",
+    [21] = "Luanium Attractor",
+    [22] = "Jumpdrives",
 }
 
 local function edit_text(t)
@@ -69,18 +74,32 @@ local function on_receive_fields(pos, formname, fields, sender)
     meta:set_int("index", tonumber(textlist.index) or meta:get_int("index"))
     meta:mark_as_private("index")
     meta:set_string("formspec", gen_page(meta))
+
+    local player_name = sender:get_player_name()
+    minetest.sound_play("questbook", {
+        to_player = sender:get_player_name(),
+        gain = 1,
+    })
 end
 
 minetest.register_node("sbz_logic:knowledge_station", {
     description = "Knowledge Station",
-    info_extra = "Explains (mostly... ehh... tries to...) all of logic.",
+    info_extra = "Explains logic.",
     on_construct = function(pos)
         local meta = minetest.get_meta(pos)
         meta:set_string("formspec", gen_page(meta))
     end,
     on_receive_fields = on_receive_fields,
     groups = { matter = 1, ui_logic = 1 },
-    tiles = { "knowledge_station.png" }
+    tiles = { "knowledge_station.png" },
+    sounds = sbz_api.sounds.matter(),
+    on_rightclick = function(pos, node, clicker, itemstack, pointed_thing)
+        local player_name = clicker:get_player_name()
+        minetest.sound_play("questbook", {
+            to_player = player_name,
+            gain = 1,
+        })
+    end
 })
 
 minetest.register_craft {

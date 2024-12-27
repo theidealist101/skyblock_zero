@@ -3,7 +3,7 @@ local function spawn_meteorite(pos)
     if #players == 0 then return end
     local player = players[math.random(#players)]
     if not pos then
-        player_pos = player:get_pos()
+        local player_pos = player:get_pos()
         local attempts = 0
         repeat
             pos = player_pos + vector.new(math.random(-100, 100), math.random(-100, 100), math.random(-100, 100))
@@ -14,16 +14,21 @@ local function spawn_meteorite(pos)
 end
 
 minetest.register_chatcommand("spawn_meteorite", {
-    params = "[<x> <y> <z>]",
+    params = "[<x> <y> <z>] | [\"here\"]",
     description = "Attempts to spawn a meteorite somewhere.",
     privs = { give = true },
     func = function(name, param)
-        param = string.split(param, " ")
-        if #param == 3 and tonumber(param[1]) ~= "fail" and tonumber(param[2]) ~= "fail" and tonumber(param[3]) ~= "fail" then
-            param = vector.new(tonumber(param[1]), tonumber(param[2]), tonumber(param[3]))
+        if param == "here" and minetest.get_player_by_name(name) then
+            param = minetest.get_player_by_name(name):get_pos()
         else
-            param = nil
+            param = string.split(param, " ")
+            if #param == 3 and tonumber(param[1]) ~= "fail" and tonumber(param[2]) ~= "fail" and tonumber(param[3]) ~= "fail" then
+                param = vector.new(tonumber(param[1]), tonumber(param[2]), tonumber(param[3]))
+            else
+                param = nil
+            end
         end
+
         local meteorite = spawn_meteorite(param)
         if not meteorite then
             minetest.chat_send_player(name, "Failed to spawn meteorite.")
@@ -61,3 +66,4 @@ dofile(modpath .. "/nodes.lua")
 dofile(modpath .. "/attractor.lua")
 dofile(modpath .. "/waypoints.lua")
 dofile(modpath .. "/visualiser.lua")
+dofile(modpath .. "/meteorite_maker.lua")

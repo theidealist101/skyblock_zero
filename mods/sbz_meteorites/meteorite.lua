@@ -1,4 +1,3 @@
---
 local function get_nearby_player(pos)
     for _, obj in ipairs(minetest.get_objects_inside_radius(pos, 200)) do
         if obj:is_player() then return obj end
@@ -7,28 +6,18 @@ end
 
 local function meteorite_explode(pos, type)
     --breaking nodes
-    for _ = 1, 100 do
-        local raycast = minetest.raycast(pos, pos + vector.random_direction() * 8, false)
-        local wear = 0
-        for pointed in raycast do
-            if pointed.type == "node" then
-                local nodename = minetest.get_node(pointed.under).name
-                wear = wear + (1 / minetest.get_item_group(nodename, "explody"))
-                --the explody group hence signifies roughly how many such nodes in a straight line it can break before stopping
-                --although this is very random
-                if wear > 1 or minetest.is_protected(pointed.under, ".meteorite") then break end
-                minetest.set_node(pointed.under, { name = minetest.registered_nodes[nodename]._exploded or "air" })
-            end
-        end
-    end
+    sbz_api.explode(pos, 8, 0.9, false)
     --placing nodes
     local protected = minetest.is_protected(pos, ".meteorite")
-    if not protected then minetest.set_node(pos,
-            { name = type == "antimatter_blob" and "sbz_meteorites:antineutronium" or "sbz_meteorites:neutronium" }) end
+    if not protected then
+        minetest.set_node(pos,
+            { name = type == "antimatter_blob" and "sbz_meteorites:antineutronium" or "sbz_meteorites:neutronium" })
+    end
     local node_types = {
         matter_blob = { "sbz_meteorites:meteoric_matter", "sbz_meteorites:meteoric_metal" },
         emitter = { "sbz_meteorites:meteoric_emittrium", "sbz_meteorites:meteoric_metal" },
-        antimatter_blob = { "sbz_meteorites:meteoric_antimatter", "sbz_meteorites:meteoric_antimatter" }
+        antimatter_blob = { "sbz_meteorites:meteoric_antimatter", "sbz_meteorites:meteoric_antimatter" },
+        strange_blob = { "sbz_resources:strange_blob", "sbz_resources:strange_blob" },
     }
     if not protected then
         for _ = 1, 16 do
@@ -85,32 +74,45 @@ local function meteorite_explode(pos, type)
     end
 end
 
+sbz_api.meteorite_explode = meteorite_explode
+
 minetest.register_entity("sbz_meteorites:meteorite", {
     initial_properties = {
         visual = "cube",
         visual_size = { x = 2, y = 2 },
         automatic_rotate = 0.2,
         glow = 14,
+        selectionbox = { -1, -1, -1, 1, 1, 1 },
         physical = false --so they enter unloaded chunks properly
     },
     on_activate = function(self, staticdata, dtime)
-        if dtime and dtime > 600 then self.object:remove() return end
+        if dtime and dtime > 600 then
+            self.object:remove()
+            return
+        end
         self.object:set_rotation(vector.new(math.random() * 2, math.random(), math.random() * 2) * math.pi)
         if staticdata and staticdata ~= "" then --not new, just unpack staticdata
             self.type = staticdata
         else                                    --new entity, initialise stuff
-            local types = { "matter_blob", "emitter", "antimatter_blob" }
+            local types = { "matter_blob", "emitter", "antimatter_blob", "strange_blob" }
+            local pos = self.object:get_pos()
+            if vector.in_area(pos, vector.new(-100, -100, -100), vector.new(100, 100, 100)) then
+                types[4] = nil -- dont want strange meteorites spawning to some noob who wont know what to do
+            end
             self.type = types[math.random(#types)]
             local offset = vector.new(math.random(-48, 48), math.random(-48, 48), math.random(-48, 48))
             local pos = self.object:get_pos()
             local target = get_nearby_player(pos)
-            if not target then self.object:remove() return end
+            if not target then
+                self.object:remove()
+                return
+            end
             self.object:set_velocity(1.5 * vector.normalize(target:get_pos() - pos + offset))
         end
         local texture = self.type .. ".png^meteorite.png"
         self.object:set_properties({ textures = { texture, texture, texture, texture, texture, texture } })
         self.object:set_armor_groups({ immortal = 1 })
-        self.sound = minetest.sound_play({ name = "rocket-loop-99748", gain = 0.15, fade = 0.1 }, { loop = true })
+        self.sound = minetest.sound_play("rocket-loop-99748", { loop = true, gain = 0.15, fade = 0.1 })
         self.waypoint = nil
         self.time_since = 100
     end,
@@ -131,8 +133,8 @@ minetest.register_entity("sbz_meteorites:meteorite", {
         for x = -1, 1 do
             for y = -1, 1 do
                 for z = -1, 1 do
-                    local node = minetest.get_node(pos+vector.new(x, y, z)).name
-                    if node ~= "ignore" and node ~= "air" then --colliding with something, should explode
+                    local node = minetest.get_node(pos + vector.new(x, y, z)).name
+                    if node ~= "ignore" and node ~= "air" and node ~= "sbz_power:funny_air" then --colliding with something, should explode
                         self.object:remove()
                         meteorite_explode(pos, self.type)
                         minetest.sound_play({ name = "distant-explosion-47562", gain = 0.4 })

@@ -6,7 +6,7 @@ local action = function(pos, _, puncher)
     local can_extract_from_emitter = minetest.get_item_group(tool_name, "core_drop_multi") > 0
     if not can_extract_from_emitter then
         minetest.sound_play("punch_core", {
-            gain = 1.0,
+            gain = 1,
             max_hear_distance = 32,
             pos = pos
         })
@@ -17,7 +17,7 @@ local action = function(pos, _, puncher)
         if math.random(1, 10) == 1 then
             puncher:get_inventory():add_item("main", "sbz_resources:raw_emittrium")
             minetest.sound_play("punch_core", {
-                gain = 1.0,
+                gain = 1,
                 max_hear_distance = 32,
                 pos = pos
             })
@@ -42,7 +42,7 @@ local action = function(pos, _, puncher)
             unlock_achievement(puncher:get_player_name(), "Obtain Emittrium")
         else
             minetest.sound_play("punch_core", {
-                gain = 1.0,
+                gain = 1,
                 max_hear_distance = 32,
                 pos = pos
             })
@@ -112,8 +112,8 @@ minetest.register_ore({
     clust_scarcity = 80 * 80 * 80,
     clust_num_ores = 1,
     clust_size = 1,
-    _min = -31000,
-    y_max = 31000,
+    y_min = -300,
+    y_max = 1000,
 })
 
 -- Emitter Resources
@@ -139,7 +139,7 @@ local function core_interact(pos, node, puncher, itemstack, pointed_thing)
     end
 
     minetest.sound_play("punch_core", {
-        gain = 1.0,
+        gain = 1,
         max_hear_distance = 32,
         pos = pos
     })
@@ -220,3 +220,6 @@ minetest.register_abm({
         })
     end,
 })
+
+mesecon.register_mvps_stopper("sbz_resources:the_core")
+-- mesecon.register_mvps_stopper("sbz_resources:emitter") -- :3
